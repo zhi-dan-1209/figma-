@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Figma Android Live Preview</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0b0d12; color: #f7f8fa; }
+    main { width: min(680px, calc(100% - 40px)); padding: 42px; border: 1px solid #252a36; border-radius: 24px; background: #131720; box-shadow: 0 24px 80px #0008; }
+    .mark { display: inline-grid; place-items: center; width: 50px; height: 50px; border-radius: 15px; background: #7966ff; font-size: 24px; }
+    h1 { margin: 22px 0 12px; font-size: clamp(28px, 6vw, 48px); letter-spacing: -0.04em; }
+    p { color: #aeb5c5; line-height: 1.7; }
+    code { color: #c9c0ff; }
+    .ok { margin-top: 28px; padding: 14px 16px; border-radius: 12px; background: #173526; color: #86efac; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark">◉</div>
+    <h1>服务已启动</h1>
+    <p>在 Figma 中导入 <code>figma-plugin/manifest.json</code>，运行插件并创建预览会话，然后使用安卓手机扫描二维码。</p>
+    <div class="ok">● 实时预览中转服务运行正常</div>
+  </main>
+</body>
+</html>

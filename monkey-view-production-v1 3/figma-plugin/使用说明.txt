@@ -1,0 +1,10 @@
+Monkey View 正式版 Figma 插件
+
+1. 部署服务器包并取得固定 HTTPS 地址。
+2. Figma Desktop → Plugins → Development → Import plugin from manifest…
+3. 选择本目录中的 manifest.json。
+4. 选中需要预览的顶层手机 Frame，运行 Monkey View。
+5. 输入固定服务地址并创建预览，安卓 Chrome 扫描二维码。
+
+插件会记住服务器地址。预览开始后画板保持锁定；点击“停止预览并重新选择画板”后可以切换目标。
+编辑时先同步轻量画面，停止修改约 1 秒后自动替换为 3× 高清画面。

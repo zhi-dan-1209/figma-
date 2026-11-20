@@ -1,0 +1,231 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    :root { font-family: Inter, system-ui, sans-serif; color: var(--figma-color-text); background: var(--figma-color-bg); }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 18px; font-size: 12px; }
+    h1 { margin: 0 0 4px; font-size: 18px; }
+    .sub { margin: 0 0 18px; color: var(--figma-color-text-secondary); line-height: 1.5; }
+    label { display: block; margin-bottom: 6px; font-weight: 600; }
+    input { width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--figma-color-border); border-radius: 6px; color: var(--figma-color-text); background: var(--figma-color-bg-secondary); outline: none; }
+    input:focus { border-color: var(--figma-color-border-brand); }
+    button { width: 100%; height: 36px; margin-top: 10px; border: 0; border-radius: 7px; color: var(--figma-color-text-onbrand); background: var(--figma-color-bg-brand); font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: .45; cursor: default; }
+    button.secondary { color: var(--figma-color-text); background: var(--figma-color-bg-tertiary); }
+    .card { margin-top: 14px; padding: 12px; border: 1px solid var(--figma-color-border); border-radius: 9px; background: var(--figma-color-bg-secondary); }
+    .row { display: flex; align-items: center; gap: 9px; }
+    .dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--figma-color-icon-disabled); }
+    .dot.ok { background: #26b56b; box-shadow: 0 0 0 3px #26b56b22; }
+    .meta { margin-top: 5px; color: var(--figma-color-text-secondary); }
+    #session { display: none; text-align: center; }
+    #qr { width: 210px; height: 210px; margin: 12px auto 8px; padding: 7px; border-radius: 10px; background: white; }
+    #link { display: block; overflow: hidden; color: var(--figma-color-text-brand); text-overflow: ellipsis; white-space: nowrap; }
+    #error { display: none; margin-top: 10px; color: var(--figma-color-text-danger); line-height: 1.4; }
+    .hint { margin-top: 14px; color: var(--figma-color-text-secondary); line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <h1>Monkey View</h1>
+  <p class="sub">选择一个 Frame，然后用安卓手机扫码实时预览。</p>
+
+  <label for="server">预览服务地址</label>
+  <input id="server" value="" placeholder="https://preview.example.com" spellcheck="false" />
+
+  <div class="card">
+    <div class="row"><span id="selectionDot" class="dot"></span><strong id="selectionTitle">请在画布中选择一个 Frame</strong></div>
+    <div id="selectionMeta" class="meta">支持 Frame、Component 和 Instance</div>
+  </div>
+
+  <button id="start" disabled>创建手机预览</button>
+  <div id="error"></div>
+
+  <section id="session" class="card">
+    <div class="row" style="justify-content:center"><span id="liveDot" class="dot"></span><strong id="liveStatus">正在连接</strong></div>
+    <img id="qr" alt="手机预览二维码" />
+    <a id="link" target="_blank" rel="noreferrer"></a>
+    <button id="stop" class="secondary">停止预览并重新选择画板</button>
+    <p class="hint">安卓手机使用 Chrome 扫码。保持此插件窗口开启，Figma 修改会自动同步。</p>
+  </section>
+
+  <script>
+    const serverInput = document.querySelector("#server");
+    const startButton = document.querySelector("#start");
+    const sessionPanel = document.querySelector("#session");
+    const errorBox = document.querySelector("#error");
+    const stopButton = document.querySelector("#stop");
+    let selectionValid = false;
+    let socket = null;
+    let publisherWsUrl = "";
+    let reconnectTimer = null;
+    let reconnectDelay = 800;
+    let sessionStopped = false;
+    let activeSession = null;
+    let uploading = false;
+    let pendingFrame = null;
+
+    function pluginMessage(message) {
+      parent.postMessage({ pluginMessage: message }, "*");
+    }
+
+    function showError(message) {
+      errorBox.textContent = message;
+      errorBox.style.display = "block";
+    }
+
+    function normalizeServerUrl(value) {
+      return value.trim().replace(/\/$/, "");
+    }
+
+    async function uploadFrame(frame) {
+      pendingFrame = frame;
+      if (uploading || !activeSession) return;
+      uploading = true;
+      try {
+        while (pendingFrame) {
+          const next = pendingFrame;
+          pendingFrame = null;
+          const label = next.stage === "high" ? "3× 高清" : "实时";
+          document.querySelector("#liveStatus").textContent = `正在同步${label}画面…`;
+          const response = await fetch(`${activeSession.server}/api/sessions/${encodeURIComponent(activeSession.id)}/frame`, {
+            method: "PUT",
+            headers: {
+              "Authorization": `Bearer ${activeSession.token}`,
+              "Content-Type": next.mimeType || "image/jpeg",
+              "X-Frame-Name": encodeURIComponent(next.name || "Figma Frame"),
+              "X-Frame-Width": String(next.width),
+              "X-Frame-Height": String(next.height),
+              "X-Frame-Scale": String(next.scale || 1),
+              "X-Frame-Stage": next.stage || "fast"
+            },
+            body: new Blob([next.bytes], { type: next.mimeType || "image/jpeg" })
+          });
+          if (!response.ok) throw new Error(`上传失败（${response.status}）`);
+          const result = await response.json();
+          document.querySelector("#liveStatus").textContent = `已实时同步 · ${result.viewers} 台设备`;
+        }
+      } catch (error) {
+        showError(error.message || String(error));
+        document.querySelector("#liveStatus").textContent = "同步失败，等待重试";
+      } finally {
+        uploading = false;
+        if (pendingFrame) uploadFrame(pendingFrame);
+      }
+    }
+
+    function connectPublisher() {
+      if (!publisherWsUrl || sessionStopped) return;
+      clearTimeout(reconnectTimer);
+      const current = new WebSocket(publisherWsUrl);
+      socket = current;
+      current.onopen = () => {
+        if (socket !== current) return;
+        reconnectDelay = 800;
+        document.querySelector("#liveDot").classList.add("ok");
+        document.querySelector("#liveStatus").textContent = "实时同步已开启";
+      };
+      current.onmessage = event => {
+        if (socket !== current) return;
+        const message = JSON.parse(event.data);
+        if (message.type === "delivered") {
+          document.querySelector("#liveStatus").textContent = `实时同步中 · ${message.viewers} 台设备`;
+        }
+      };
+      current.onclose = () => {
+        if (socket !== current || sessionStopped) return;
+        document.querySelector("#liveDot").classList.remove("ok");
+        document.querySelector("#liveStatus").textContent = "连接中断，正在自动重连…";
+        reconnectTimer = setTimeout(connectPublisher, reconnectDelay);
+        reconnectDelay = Math.min(Math.round(reconnectDelay * 1.7), 6000);
+      };
+      current.onerror = () => current.close();
+    }
+
+    startButton.addEventListener("click", async () => {
+      errorBox.style.display = "none";
+      startButton.disabled = true;
+      const server = normalizeServerUrl(serverInput.value);
+      if (!/^https:\/\//.test(server) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(server)) {
+        showError("请输入有效的 HTTPS 预览服务地址。");
+        startButton.disabled = false;
+        return;
+      }
+      try {
+        const response = await fetch(`${server}/api/sessions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        if (!response.ok) throw new Error(`服务返回 ${response.status}`);
+        const data = await response.json();
+        activeSession = { server, id: data.id, token: data.publisherToken };
+        pluginMessage({ type: "save-settings", serverUrl: server });
+        sessionPanel.style.display = "block";
+        document.querySelector("#qr").src = `${server}/api/qr?text=${encodeURIComponent(data.viewerUrl)}`;
+        const link = document.querySelector("#link");
+        link.href = data.viewerUrl;
+        link.textContent = data.viewerUrl;
+
+        sessionStopped = false;
+        publisherWsUrl = data.publisherWsUrl;
+        socket?.close();
+        connectPublisher();
+        pluginMessage({ type: "start-preview" });
+        startButton.textContent = "预览已创建";
+      } catch (error) {
+        showError(`无法连接预览服务：${error.message}`);
+        startButton.disabled = !selectionValid;
+      }
+    });
+
+    stopButton.addEventListener("click", async () => {
+      sessionStopped = true;
+      clearTimeout(reconnectTimer);
+      socket?.close();
+      socket = null;
+      publisherWsUrl = "";
+      pendingFrame = null;
+      if (activeSession) {
+        await fetch(`${activeSession.server}/api/sessions/${encodeURIComponent(activeSession.id)}`, {
+          method: "DELETE",
+          headers: { "Authorization": `Bearer ${activeSession.token}` }
+        }).catch(() => {});
+      }
+      activeSession = null;
+      uploading = false;
+      sessionPanel.style.display = "none";
+      startButton.textContent = "创建手机预览";
+      startButton.disabled = !selectionValid;
+      document.querySelector("#liveDot").classList.remove("ok");
+      pluginMessage({ type: "stop-preview" });
+    });
+
+    window.onmessage = async event => {
+      const message = event.data.pluginMessage;
+      if (!message) return;
+      if (message.type === "selection") {
+        selectionValid = message.valid;
+        startButton.disabled = Boolean(activeSession) || !selectionValid;
+        document.querySelector("#selectionDot").classList.toggle("ok", selectionValid);
+        document.querySelector("#selectionTitle").textContent = selectionValid ? message.name : "请在画布中选择一个 Frame";
+        document.querySelector("#selectionMeta").textContent = selectionValid
+          ? `${message.width} × ${message.height}${message.locked ? " · 已锁定预览" : ""}`
+          : "支持 Frame、Component 和 Instance";
+      }
+      if (message.type === "settings" && message.serverUrl) {
+        serverInput.value = message.serverUrl;
+      }
+      if (message.type === "frame") {
+        uploadFrame({
+          bytes: message.bytes,
+          mimeType: message.mimeType,
+          name: message.name,
+          width: message.width,
+          height: message.height,
+          scale: message.scale,
+          stage: message.stage
+        });
+      }
+      if (message.type === "error") showError(message.message);
+    };
+    pluginMessage({ type: "ready" });
+  </script>
+</body>
+</html>
