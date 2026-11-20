@@ -1,0 +1,14 @@
+{
+  "name": "Monkey View",
+  "id": "1672106436383195310",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": {
+    "allowedDomains": ["*"],
+    "reasoning": "Connects to the preview server URL configured by the user so an Android phone can receive live design previews.",
+    "devAllowedDomains": ["http://localhost:3000", "ws://localhost:3000"]
+  }
+}
