@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <title>Figma 手机预览</title>
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #0a0a0a; font-family: system-ui, sans-serif; }
+    body { padding: 0; }
+    #stage { position: fixed; inset: 0; width: 100%; height: 100vh; height: 100dvh; overflow-x: hidden; overflow-y: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
+    #frame { display: none; width: 100%; height: auto; user-select: none; -webkit-user-drag: none; }
+    #empty { min-height: 100%; display: flex; flex-direction: column; justify-content: center; text-align: center; color: #fff; padding: 28px; }
+    #empty .pulse { margin: auto; width: 52px; height: 52px; border-radius: 50%; border: 3px solid #7966ff; border-right-color: transparent; animation: spin .9s linear infinite; }
+    #empty h1 { margin: 22px 0 8px; font-size: 20px; }
+    #empty p { margin: 0; color: #999; line-height: 1.5; }
+    #status { position: fixed; top: max(12px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 2; padding: 7px 12px; color: #fff; background: #111c; border: 1px solid #ffffff1f; border-radius: 999px; font-size: 12px; backdrop-filter: blur(12px); transition: opacity .3s; }
+    #fullscreen { position: fixed; right: max(14px, env(safe-area-inset-right)); bottom: max(14px, env(safe-area-inset-bottom)); z-index: 3; border: 0; border-radius: 50%; width: 46px; height: 46px; background: #111c; color: white; font-size: 19px; backdrop-filter: blur(12px); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="status">正在连接…</div>
+  <main id="stage">
+    <img id="frame" alt="Figma frame preview" />
+    <section id="empty">
+      <div class="pulse"></div>
+      <h1>等待 Figma 画面</h1>
+      <p>保持插件开启并选择一个 Frame</p>
+    </section>
+  </main>
+  <button id="fullscreen" aria-label="全屏">⛶</button>
+  <script>
+    const id = location.pathname.split("/").filter(Boolean).pop();
+    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    const socketUrl = `${protocol}//${location.host}/ws/view/${encodeURIComponent(id)}`;
+    const status = document.querySelector("#status");
+    const frame = document.querySelector("#frame");
+    const empty = document.querySelector("#empty");
+    let retryDelay = 1000;
+
+    function connect() {
+      status.textContent = "正在连接…";
+      const socket = new WebSocket(socketUrl);
+      socket.onopen = () => { retryDelay = 1000; status.textContent = "已连接，等待画面"; };
+      socket.onmessage = event => {
+        const message = JSON.parse(event.data);
+        if (message.type === "frame") {
+          // Reserve the full frame height while loading/replacing the image.
+          // Do not reset stage.scrollTop: live updates keep the viewing position.
+          if (message.width > 0 && message.height > 0) {
+            frame.style.aspectRatio = `${message.width} / ${message.height}`;
+          }
+          frame.src = message.dataUrl || new URL(message.imageUrl, location.origin).href;
+          frame.style.display = "block";
+          empty.style.display = "none";
+          document.title = `${message.name} · Figma 预览`;
+          status.textContent = "已实时更新";
+          setTimeout(() => status.style.opacity = "0", 1200);
+        }
+      };
+      socket.onclose = event => {
+        status.style.opacity = "1";
+        status.textContent = event.code === 4000 ? "预览已过期" : "连接中断，正在重连…";
+        if (event.code !== 4000) {
+          setTimeout(connect, retryDelay);
+          retryDelay = Math.min(retryDelay * 1.7, 8000);
+        }
+      };
+    }
+
+    document.querySelector("#fullscreen").addEventListener("click", async () => {
+      if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.({ navigationUI: "hide" });
+      else await document.exitFullscreen?.();
+    });
+    connect();
+  </script>
+</body>
+</html>
